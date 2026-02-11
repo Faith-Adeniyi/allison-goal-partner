@@ -1,0 +1,21 @@
+# API Keys and Secrets
+.env
+
+# Environments
+venv/
+.venv/
+env/
+
+# Python Cache
+__pycache__/
+*.pyc
+*.py[cod]
+*$py.class
+.pytest_cache/
+.vscode/
+
+# Local Storage (Allison's plans)
+saved_plans/
+
+# Zips
+*.zip
