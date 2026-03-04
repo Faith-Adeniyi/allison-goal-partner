@@ -1,5 +1,7 @@
 # API Keys and Secrets
 .env
+credentials.json
+token.json
 
 # Environments
 venv/
@@ -16,6 +18,8 @@ __pycache__/
 
 # Local Storage (Allison's plans)
 saved_plans/
+app.db
+database/
 
 # Zips
 *.zip

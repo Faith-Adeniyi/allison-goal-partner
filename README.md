@@ -13,3 +13,27 @@ Allison is a sophisticated AI assistant designed to be a "Goal Partner" rather t
 * **AI Engine:** Google Gemini (Generative AI)
 * **Data Validation:** Pydantic
 * **Memory:** Vector Context & Spaced Repetition Logic
+
+## Local Run
+```bash
+python -m venv venv
+venv\Scripts\python -m pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+## Auth + API Contract
+All goal/chat endpoints are JWT-protected.
+
+Auth routes:
+- `POST /auth/signup`
+- `POST /auth/login`
+- `GET /auth/me`
+
+Protected routes:
+- `POST /chat`
+- `GET /goals`
+- `GET /goals/{plan_id}`
+- `POST /goals/{plan_id}/coach`
+- `POST /goals/{plan_id}/checkin`
+- `PATCH /goals/{plan_id}/check/{milestone_id}/{task_id}`
+- `POST /goals/{plan_id}/weekly-review`

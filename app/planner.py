@@ -1,35 +1,34 @@
-from pydantic import BaseModel
-from typing import List
+# app/planner.py
 
-class WeeklyTask(BaseModel):
-    week_number: int
-    task_description: str
-    focus_area: str
+from app.brain import GoalPlan
 
-class GoalPlan(BaseModel):
-    goal_summary: str
-    target_date: str
-    milestones: List[WeeklyTask]
-
-# This class handles the logic of generating the structured breakdown
 class AllisonPlanner:
-    def __init__(self, brain_instance):
-        self.brain = brain_instance
-
-    def generate_plan(self, history):
-        # Create a copy of history to avoid modifying the primary chat session
-        temp_history = list(history)
+    """
+    Mode 1: The Goal Architect.
+    Handles heavy computation to generate structured project plans.
+    """
+    def __init__(self, brain_client):
+        self.brain = brain_client
         
-        planning_prompt = (
-            "Based on our conversation, create a step-by-step weekly action plan "
-            "to reach the target date. Break it down into clear, manageable weeks."
+        self.architect_prompt = (
+            "You are Allison, a structured execution coach. "
+            "You break goals into measurable milestones and actionable tasks. "
+            "You focus on realism, discipline, and clarity. You avoid vague advice. "
+            "You always provide structured output."
         )
-        
-        # Append the planning request using the multi-part content format
-        temp_history.append({
-            "role": "user", 
-            "parts": [{"text": planning_prompt}]
-        })
-        
-        # Request the structured plan from the brain
-        return self.brain.get_structured_plan(temp_history)
+
+    def generate_plan(self, context_history: str) -> GoalPlan:
+        """
+        Executes plan generation by ingesting validated conversational context 
+        and enforcing strict JSON output compliance.
+        """
+        response = self.brain.client.models.generate_content(
+            model=self.brain.model_id,
+            contents=context_history,
+            config={
+                'system_instruction': self.architect_prompt,
+                'response_mime_type': 'application/json',
+                'response_schema': GoalPlan,
+            }
+        )
+        return response.parsed

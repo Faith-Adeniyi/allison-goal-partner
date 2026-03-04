@@ -3,3 +3,7 @@ uvicorn
 python-dotenv
 google-genai
 pydantic
+sqlalchemy
+passlib[bcrypt]
+python-jose[cryptography]
+email-validator
