@@ -23,3 +23,37 @@ database/
 
 # Zips
 *.zip
+
+# Logs
+*.log
+logs/
+
+# Build / distribution
+build/
+dist/
+*.egg-info/
+
+# Type checking / tooling caches
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.pytype/
+.cache/
+
+# Jupyter / misc
+.ipynb_checkpoints/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# Secrets (common variants)
+.env.*
+!.env.example
+!.env.sample
+
+# Local DB variants
+*.sqlite
+*.sqlite3
