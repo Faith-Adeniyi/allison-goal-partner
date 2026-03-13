@@ -1,7 +1,6 @@
 fastapi
 uvicorn
 python-dotenv
-google-genai
 pydantic
 sqlalchemy
 passlib[bcrypt]
@@ -10,3 +9,4 @@ email-validator
 python-multipart
 exponent_server_sdk
 psycopg2-binary
+google-generativeai
