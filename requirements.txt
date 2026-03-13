@@ -10,3 +10,4 @@ python-multipart
 exponent_server_sdk
 psycopg2-binary
 google-generativeai
+google-genai
