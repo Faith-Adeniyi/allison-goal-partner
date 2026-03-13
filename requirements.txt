@@ -7,3 +7,6 @@ sqlalchemy
 passlib[bcrypt]
 python-jose[cryptography]
 email-validator
+python-multipart
+exponent_server_sdk
+psycopg2-binary

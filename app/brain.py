@@ -6,6 +6,8 @@ from google import genai
 from pydantic import BaseModel, Field
 from typing import List
 from app.utils.persona import BASE_SYSTEM_PROMPT
+from app.utils.prompts import ALLISON_SYSTEM_PROMPT
+from app.schemas import IntentRouter
 
 load_dotenv()
 
@@ -63,14 +65,14 @@ class AllisonBrain:
         self.model_id = "gemini-2.5-flash" 
 
     def get_response(self, chat_history):
-        """Processes conversational input against the core persona matrix."""
+        """Processes conversational input against the core persona matrix with strict two-phase commitment protocol."""
         response = self.client.models.generate_content(
             model=self.model_id,
             contents=chat_history,
             config={
-                'system_instruction': BASE_SYSTEM_PROMPT,
+                'system_instruction': ALLISON_SYSTEM_PROMPT,
                 'response_mime_type': 'application/json',
-                'response_schema': AllisonResponse,
+                'response_schema': IntentRouter,
             }
         )
         return response.parsed

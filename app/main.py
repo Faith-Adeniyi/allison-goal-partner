@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from app.auth import (
     create_access_token,
@@ -24,11 +25,18 @@ from app.schemas import (
     AuthResponse,
     ChatRequest,
     CheckinPayload,
+    DueDateUpdate,
     LoginRequest,
+    PlanMetaUpdatePayload,
     SignUpRequest,
+    StreakStatus,
+    TaskUpdatePayload,
     UserOut,
 )
 from app.storage import PlanStorage
+
+class TokenUpdate(BaseModel):
+    token: str
 
 app = FastAPI(title="Allison: Goal Assistant API")
 
@@ -66,6 +74,72 @@ def _serialize_user(user: User) -> UserOut:
         email=user.email,
         created_at=user.created_at,
     )
+
+
+def _normalize_chat_mode(raw_mode: str | None) -> str:
+    normalized = (raw_mode or "assistant").strip().lower()
+    return "plan_builder" if normalized == "plan_builder" else "assistant"
+
+
+def _mode_instruction(mode: str) -> str:
+    if mode == "plan_builder":
+        return (
+            "MODE: PLAN_BUILDER\n"
+            "Ask clarifying questions when details are missing. "
+            "Provide milestone-driven plans with realistic sequencing and dates."
+        )
+    return "MODE: ASSISTANT\nFocus on immediate next actions and execution clarity."
+
+
+def _format_recent_history(chat_history: list) -> str:
+    if not chat_history:
+        return ""
+
+    lines: list[str] = []
+    for entry in chat_history[-16:]:
+        text = (getattr(entry, "text", "") or "").strip()
+        if not text:
+            continue
+
+        sender = (getattr(entry, "sender", "user") or "user").lower()
+        role = "Allison" if sender in {"ai", "assistant", "model"} else "User"
+        lines.append(f"{role}: {text}")
+
+    return "\n".join(lines)
+
+
+def _fallback_reply(user_message: str, mode: str) -> str:
+    base = (
+        "I can still help even while the model is unavailable. "
+        "Share one concrete next step you can finish in 20 minutes, and I'll refine it."
+    )
+    if mode == "plan_builder":
+        return (
+            "Let's keep building your plan. "
+            "Tell me your exact target date and available weekly hours, and I will draft milestones manually."
+        )
+    if "stuck" in user_message.lower():
+        return "Let's unblock this now. What's the smallest action you can take in the next 10 minutes?"
+    return base
+
+
+def _compose_chat_context(
+    mode: str,
+    memory_context: str,
+    chat_history: list,
+    user_message: str,
+) -> str:
+    sections = [_mode_instruction(mode)]
+
+    recent_history = _format_recent_history(chat_history)
+    if recent_history:
+        sections.append(f"RECENT_CHAT_HISTORY:\n{recent_history}")
+
+    if memory_context.strip():
+        sections.append(f"PERSISTED_MEMORY:\n{memory_context.strip()}")
+
+    sections.append(f"LATEST_USER_MESSAGE:\n{user_message.strip()}")
+    return "\n\n".join(sections)
 
 
 @app.get("/")
@@ -123,28 +197,63 @@ def chat_with_allison(
 ):
     try:
         user_id = str(current_user.id)
-        memory.add_message(user_id, user_input.goal_id, "user", user_input.message)
+        goal_id = (user_input.goal_id or "general").strip() or "general"
+        user_message = user_input.message.strip()
+        if not user_message:
+            raise HTTPException(status_code=422, detail="Message cannot be empty.")
+        mode = _normalize_chat_mode(user_input.mode)
 
-        context = memory.get_context(user_id, user_input.goal_id)
-        ai_data = allison.get_response(context)
+        memory.add_message(user_id, goal_id, "user", user_message)
 
-        memory.add_message(user_id, user_input.goal_id, "assistant", ai_data.text_reply)
+        context = memory.get_context(user_id, goal_id)
+        composed_context = _compose_chat_context(
+            mode=mode,
+            memory_context=context,
+            chat_history=user_input.chat_history,
+            user_message=user_message,
+        )
+
+        try:
+            ai_data = allison.get_response(composed_context)
+            reply_text = getattr(ai_data, "text_reply", "").strip() or _fallback_reply(user_message, mode)
+            goal_category = getattr(ai_data, "goal_category", "General")
+            missing_date = bool(getattr(ai_data, "is_timeframe_missing", False))
+            missing_frequency = bool(getattr(ai_data, "is_frequency_missing", False))
+            has_active_goal = bool(getattr(ai_data, "has_active_goal", False))
+            agent_status = "ok"
+        except Exception as model_exc:
+            print(f"CHAT MODEL ERROR: {model_exc}")
+            reply_text = _fallback_reply(user_message, mode)
+            goal_category = "General"
+            missing_date = True
+            missing_frequency = True
+            has_active_goal = False
+            agent_status = "fallback"
+
+        memory.add_message(user_id, goal_id, "assistant", reply_text)
 
         action_plan = {}
         storage_path = "NOT_SAVED"
 
-        if ai_data.has_active_goal and not ai_data.is_timeframe_missing and not ai_data.is_frequency_missing:
-            plan_obj = planner.generate_plan(context)
-            action_plan = plan_obj.model_dump()
-            storage_path = storage.save_plan(plan_obj, owner_user_id=current_user.id)
+        if has_active_goal and not missing_date and not missing_frequency:
+            try:
+                plan_obj = planner.generate_plan(composed_context)
+                action_plan = plan_obj.model_dump()
+                storage_path = storage.save_plan(plan_obj, owner_user_id=current_user.id)
+            except Exception as planner_exc:
+                print(f"PLAN GENERATION ERROR: {planner_exc}")
 
         return {
-            "reply": ai_data.text_reply,
-            "category": ai_data.goal_category,
-            "missing_date": ai_data.is_timeframe_missing,
-            "missing_frequency": ai_data.is_frequency_missing,
+            "reply": reply_text,
+            "category": goal_category,
+            "missing_date": missing_date,
+            "missing_frequency": missing_frequency,
             "action_plan": action_plan,
             "saved_at": storage_path,
+            "mode": mode,
+            "goal_id": goal_id,
+            "conversation_id": user_input.conversation_id or goal_id,
+            "agent_status": agent_status,
         }
     except Exception as exc:
         print(f"SERVER ERROR: {exc}")
@@ -173,6 +282,123 @@ def get_goal_detail(plan_id: str, current_user: User = Depends(get_current_user)
     except Exception as exc:
         print(f"FETCH ERROR: {exc}")
         raise HTTPException(status_code=500, detail="Failed to retrieve goal details.")
+
+
+@app.delete("/goals/{plan_id}")
+def delete_goal(plan_id: str, current_user: User = Depends(get_current_user)):
+    ok = storage.delete_plan(plan_id, owner_user_id=current_user.id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Goal plan not found.")
+    return {"status": "success", "plan_id": plan_id}
+
+
+@app.patch("/goals/{plan_id}/meta")
+def update_goal_meta(
+    plan_id: str,
+    payload: PlanMetaUpdatePayload,
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        plan = storage.update_target_date(plan_id, payload.target_date, owner_user_id=current_user.id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Goal plan not found.")
+        return {"status": "success", "data": plan}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"META UPDATE ERROR: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to update goal meta.")
+
+
+@app.get("/goals/{plan_id}/streak")
+def get_goal_streak(plan_id: str, current_user: User = Depends(get_current_user)):
+    streak = storage.get_streak(plan_id, owner_user_id=current_user.id)
+    if streak is None:
+        raise HTTPException(status_code=404, detail="Goal plan not found.")
+    return {"status": "success", "data": streak}
+
+
+@app.post("/goals/{plan_id}/milestones/{milestone_id}/tasks")
+def add_task(
+    plan_id: str,
+    milestone_id: int,
+    payload: TaskUpdatePayload,
+    current_user: User = Depends(get_current_user),
+):
+    title = (payload.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="Task title is required.")
+    plan = storage.add_task(
+        plan_id,
+        milestone_id=milestone_id,
+        title=title,
+        due_date=payload.due_date,
+        owner_user_id=current_user.id,
+    )
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Goal plan or milestone not found.")
+    return {"status": "success", "data": plan}
+
+
+@app.patch("/goals/{plan_id}/milestones/{milestone_id}/tasks/{task_id}")
+def update_task(
+    plan_id: str,
+    milestone_id: int,
+    task_id: int,
+    payload: TaskUpdatePayload,
+    current_user: User = Depends(get_current_user),
+):
+    plan = storage.update_task(
+        plan_id,
+        milestone_id=milestone_id,
+        task_id=task_id,
+        title=payload.title,
+        due_date=payload.due_date,
+        owner_user_id=current_user.id,
+    )
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Goal plan or task not found.")
+    return {"status": "success", "data": plan}
+
+
+@app.delete("/goals/{plan_id}/milestones/{milestone_id}/tasks/{task_id}")
+def delete_task(
+    plan_id: str,
+    milestone_id: int,
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+):
+    plan = storage.delete_task(
+        plan_id,
+        milestone_id=milestone_id,
+        task_id=task_id,
+        owner_user_id=current_user.id,
+    )
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Goal plan or task not found.")
+    return {"status": "success", "data": plan}
+
+
+class ReorderPayload(BaseModel):
+    ordered_task_ids: list[int]
+
+
+@app.post("/goals/{plan_id}/milestones/{milestone_id}/tasks/reorder")
+def reorder_tasks(
+    plan_id: str,
+    milestone_id: int,
+    payload: ReorderPayload,
+    current_user: User = Depends(get_current_user),
+):
+    plan = storage.reorder_tasks(
+        plan_id,
+        milestone_id=milestone_id,
+        ordered_task_ids=payload.ordered_task_ids,
+        owner_user_id=current_user.id,
+    )
+    if plan is None:
+        raise HTTPException(status_code=400, detail="Invalid reorder payload.")
+    return {"status": "success", "data": plan}
 
 
 @app.post("/goals/{plan_id}/coach")
@@ -233,7 +459,13 @@ def submit_daily_checkin(
         plan_data["checkins"].append(checkin_entry)
 
         storage.save_plan_direct(plan_id, plan_data, owner_user_id=current_user.id)
-        return {"status": "success", "plan_id": plan_id, "checkin": checkin_entry}
+
+        streak = None
+        if payload.worked_today:
+            storage.apply_task_completion_activity(plan_id, owner_user_id=current_user.id)
+            streak = storage.get_streak(plan_id, owner_user_id=current_user.id) or {}
+
+        return {"status": "success", "plan_id": plan_id, "checkin": checkin_entry, "streak": streak}
     except HTTPException:
         raise
     except Exception as exc:
@@ -323,6 +555,12 @@ def toggle_task(
                     )
 
         target_task["is_completed"] = 0 if is_currently_completed == 1 else 1
+        if target_task["is_completed"] == 1:
+            storage.apply_task_completion_activity(plan_id, owner_user_id=current_user.id)
+
+        # Include latest streak snapshot in the response so the mobile app can update immediately
+        # even if navigation/focus effects don't re-run.
+        streak = storage.get_streak(plan_id, owner_user_id=current_user.id) or {}
 
         for milestone in plan_data.get("milestones", []):
             tasks_in_milestone = milestone.get("tasks", [])
@@ -344,6 +582,7 @@ def toggle_task(
             "milestone_id": milestone_id,
             "task_id": task_id,
             "new_progress": new_progress,
+            "streak": streak,
         }
     except HTTPException:
         raise
@@ -351,6 +590,11 @@ def toggle_task(
         print(f"UPDATE ERROR: {exc}")
         raise HTTPException(status_code=500, detail="Failed to update task status.")
 
+@app.post("/users/push-token")
+def update_push_token(token_data: TokenUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    current_user.expo_push_token = token_data.token
+    db.commit()
+    return {"status": "success"}
 
 if __name__ == "__main__":
     uvicorn.run(

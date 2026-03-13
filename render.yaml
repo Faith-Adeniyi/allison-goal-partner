@@ -1,0 +1,12 @@
+# Automates the deployment and configuration of the Allison backend service.
+# SECURE VERSION: Sensitive environment variables are managed via the Render UI.
+services:
+  - type: web
+    name: allison-backend
+    plan: starter
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.0
