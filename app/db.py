@@ -56,6 +56,17 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+def init_db() -> None:
+    """
+    Import models so SQLAlchemy registers them on Base.metadata, then create tables.
+    Safe to call multiple times.
+    """
+    # Local import to avoid circular imports at module import time.
+    from app import models  # noqa: F401
+
+    Base.metadata.create_all(bind=engine)
+
+
 def get_db() -> Generator:
     db = SessionLocal()
     try:
