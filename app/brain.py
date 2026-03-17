@@ -62,7 +62,7 @@ class AllisonBrain:
     def __init__(self):
         self.api_key = os.getenv("GENAI_API_KEY")
         self.client = genai.Client(api_key=self.api_key)
-        self.model_id = "gemini-2.5-flash" 
+        self.model_id = "gemini-1.5-flash" 
 
     def get_response(self, chat_history):
         """Processes conversational input against the core persona matrix with strict two-phase commitment protocol."""

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=
 # Automates the deployment and configuration of the Allison backend service.
 # SECURE VERSION: Sensitive environment variables are managed via the Render UI.
 services:
