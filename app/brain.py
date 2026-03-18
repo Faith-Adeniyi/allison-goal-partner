@@ -61,18 +61,26 @@ class AllisonBrain:
     """Core execution engine for the AI agent."""
     def __init__(self):
         self.api_key = os.getenv("GENAI_API_KEY")
+        if not self.api_key:
+            raise RuntimeError("Missing GENAI_API_KEY environment variable (Gemini).")
+
         self.client = genai.Client(api_key=self.api_key)
-        self.model_id = "gemini-1.5-flash" 
+        self.model_id = os.getenv("GENAI_MODEL_ID", "gemini-1.5-flash")
 
     def get_response(self, chat_history):
         """Processes conversational input against the core persona matrix with strict two-phase commitment protocol."""
-        response = self.client.models.generate_content(
-            model=self.model_id,
-            contents=chat_history,
-            config={
-                'system_instruction': ALLISON_SYSTEM_PROMPT,
-                'response_mime_type': 'application/json',
-                'response_schema': IntentRouter,
-            }
-        )
-        return response.parsed
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_id,
+                contents=chat_history,
+                config={
+                    "system_instruction": ALLISON_SYSTEM_PROMPT,
+                    "response_mime_type": "application/json",
+                    "response_schema": IntentRouter,
+                },
+            )
+            return response.parsed
+        except Exception as exc:
+            # This exception is caught by /chat and will force the fallback response.
+            # Ensure we log enough to diagnose missing keys, invalid model ids, quota errors, etc.
+            raise RuntimeError(f"Gemini generate_content failed (model={self.model_id}): {exc}") from exc
