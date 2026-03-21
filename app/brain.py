@@ -65,7 +65,7 @@ class AllisonBrain:
             raise RuntimeError("Missing GENAI_API_KEY environment variable (Gemini).")
 
         self.client = genai.Client(api_key=self.api_key)
-        self.model_id = os.getenv("GENAI_MODEL_ID", "gemini-1.5-flash")
+        self.model_id = os.getenv("GENAI_MODEL_ID", "gemini-2.5-flash")
 
     def get_response(self, chat_history):
         """Processes conversational input against the core persona matrix with strict two-phase commitment protocol."""
