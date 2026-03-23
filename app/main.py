@@ -213,33 +213,55 @@ def chat_with_allison(
             user_message=user_message,
         )
 
+        # Default outputs
+        reply_text = ""
+        goal_category = "General"
+        missing_date = True
+        missing_frequency = True
+        has_active_goal = False
+        agent_status = "ok"
+
+        # 1) Always produce a text reply (plain text generation)
         try:
-            ai_data = allison.get_response(composed_context)
-            reply_text = getattr(ai_data, "text_reply", "").strip() or _fallback_reply(user_message, mode)
-            goal_category = getattr(ai_data, "goal_category", "General")
-            missing_date = bool(getattr(ai_data, "is_timeframe_missing", False))
-            missing_frequency = bool(getattr(ai_data, "is_frequency_missing", False))
-            has_active_goal = bool(getattr(ai_data, "has_active_goal", False))
-            agent_status = "ok"
+            reply_text = allison.chat_text(composed_context) or _fallback_reply(user_message, mode)
         except Exception as model_exc:
-            print(f"CHAT MODEL ERROR: {model_exc}")
+            print(f"CHAT TEXT MODEL ERROR: {model_exc}")
             reply_text = _fallback_reply(user_message, mode)
-            goal_category = "General"
-            missing_date = True
-            missing_frequency = True
-            has_active_goal = False
             agent_status = "fallback"
+
+        # 2) Only in plan_builder mode do we run strict JSON routing + plan generation.
+        #    In assistant mode, we do not force JSON; we just chat.
+        if mode == "plan_builder":
+            try:
+                router = allison.route_intent(composed_context)
+                # action_mode: 0 => conversational coach, 1 => plan builder activation
+                action_mode = int(getattr(router, "action_mode", 0) or 0)
+                goal_summary = (getattr(router, "Goal_Topic_Summary", "") or "").strip()
+                goal_category = "General" if not goal_summary else "General"
+                has_active_goal = bool(goal_summary) and action_mode == 1
+                # NOTE: Timeframe/frequency detection should be improved; for now, only attempt plan generation
+                # when user explicitly activated plan building (action_mode == 1).
+                missing_date = False if action_mode == 1 else True
+                missing_frequency = False if action_mode == 1 else True
+            except Exception as router_exc:
+                print(f"CHAT ROUTER ERROR: {router_exc}")
+                # Keep reply_text; don't block chat.
+                agent_status = "fallback"
 
         memory.add_message(user_id, goal_id, "assistant", reply_text)
 
         action_plan = {}
         storage_path = "NOT_SAVED"
 
-        if has_active_goal and not missing_date and not missing_frequency:
+        # 3) Only generate a plan when requirements are satisfied.
+        # For now we gate on plan_builder activation; later we should do real date/frequency checks.
+        if mode == "plan_builder" and has_active_goal and not missing_date and not missing_frequency:
             try:
                 plan_obj = planner.generate_plan(composed_context)
                 action_plan = plan_obj.model_dump()
                 storage_path = storage.save_plan(plan_obj, owner_user_id=current_user.id)
+                # Confirm to the user that a plan was generated (reply stays human-readable).
+                reply_text = f"✅ Plan generated and saved.\n\n{reply_text}"
             except Exception as planner_exc:
                 print(f"PLAN GENERATION ERROR: {planner_exc}")
 

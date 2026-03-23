@@ -54,7 +54,7 @@ class AllisonResponse(BaseModel):
     goal_category: str
     has_active_goal: bool
     is_timeframe_missing: bool
-    is_frequency_missing: bool 
+    is_frequency_missing: bool
     target_date: str
 
 class AllisonBrain:
@@ -65,14 +65,38 @@ class AllisonBrain:
             raise RuntimeError("Missing GENAI_API_KEY environment variable (Gemini).")
 
         self.client = genai.Client(api_key=self.api_key)
-        self.model_id = os.getenv("GENAI_MODEL_ID", "gemini-2.5-flash")
+        self.model_id = os.getenv("GENAI_MODEL_ID", "gemini-1.5-flash")
 
-    def get_response(self, chat_history):
-        """Processes conversational input against the core persona matrix with strict two-phase commitment protocol."""
+    def chat_text(self, composed_context: str) -> str:
+        """
+        Normal conversational response (plain text).
+        This should be used for most messages.
+        """
         try:
             response = self.client.models.generate_content(
                 model=self.model_id,
-                contents=chat_history,
+                contents=composed_context,
+                config={
+                    "system_instruction": ALLISON_SYSTEM_PROMPT,
+                },
+            )
+            text = getattr(response, "text", None)
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+            # Fallback to stringifying if SDK returns a different structure.
+            return str(response).strip()
+        except Exception as exc:
+            raise RuntimeError(f"Gemini chat_text failed (model={self.model_id}): {exc}") from exc
+
+    def route_intent(self, composed_context: str) -> IntentRouter:
+        """
+        Lightweight routing/classification for Plan Builder mode.
+        Returns JSON strictly matching IntentRouter.
+        """
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_id,
+                contents=composed_context,
                 config={
                     "system_instruction": ALLISON_SYSTEM_PROMPT,
                     "response_mime_type": "application/json",
@@ -81,6 +105,4 @@ class AllisonBrain:
             )
             return response.parsed
         except Exception as exc:
-            # This exception is caught by /chat and will force the fallback response.
-            # Ensure we log enough to diagnose missing keys, invalid model ids, quota errors, etc.
-            raise RuntimeError(f"Gemini generate_content failed (model={self.model_id}): {exc}") from exc
+            raise RuntimeError(f"Gemini route_intent failed (model={self.model_id}): {exc}") from exc
